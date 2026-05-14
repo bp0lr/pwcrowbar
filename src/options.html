@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>pwcrowbar</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h1>pwcrowbar</h1>
+        <p class="subtitle">
+          Configure regex rules to block network assets or redirects before they load.
+        </p>
+      </header>
+
+      <nav class="tabs" role="tablist">
+        <button
+          class="tab-button active"
+          data-tab-target="resources"
+          role="tab"
+          aria-selected="true"
+        >
+          Resource Blocking
+        </button>
+        <button class="tab-button" data-tab-target="redirects" role="tab" aria-selected="false">
+          Redirect Blocking
+        </button>
+        <button class="tab-button" data-tab-target="help" role="tab" aria-selected="false">
+          Help
+        </button>
+      </nav>
+
+      <section class="tab-panel active" data-tab-panel="resources" role="tabpanel">
+        <section class="form-section">
+          <h2 id="form-title">Create resource rule</h2>
+          <form id="rule-form">
+            <input type="hidden" id="rule-id" />
+
+            <label for="domain-regex">Domain regex</label>
+            <input
+              id="domain-regex"
+              name="domainRegex"
+              type="text"
+              placeholder="e.g. (.*\\.)?example\\.com"
+              required
+            />
+
+            <label for="file-regexes">File regex list (one per line)</label>
+            <textarea
+              id="file-regexes"
+              name="fileRegexes"
+              rows="5"
+              placeholder="e.g. .*\\/ads\\/.*\n.*\\.tracking\\.js"
+              required
+            ></textarea>
+
+            <div class="actions">
+              <button type="submit" id="save-button">Save rule</button>
+              <button type="button" id="reset-button" class="secondary">Clear</button>
+            </div>
+          </form>
+          <p id="form-feedback" role="status" aria-live="polite"></p>
+        </section>
+
+        <section class="list-section">
+          <h2>Resource rules</h2>
+          <ul id="rules-list" class="rules-list"></ul>
+        </section>
+      </section>
+
+      <section class="tab-panel" data-tab-panel="redirects" role="tabpanel" hidden>
+        <section class="form-section">
+          <h2 id="redirect-form-title">Create redirect rule</h2>
+          <form id="redirect-form">
+            <input type="hidden" id="redirect-rule-id" />
+
+            <label for="redirect-domain-regex">Destination regex (domain/path)</label>
+            <input
+              id="redirect-domain-regex"
+              name="redirectDomainRegex"
+              type="text"
+              placeholder="e.g. (.*\\.)?example\\.com(/subscription.*)?"
+              required
+            />
+
+            <div class="actions">
+              <button type="submit" id="redirect-save-button">Save redirect</button>
+              <button type="button" id="redirect-reset-button" class="secondary">Clear</button>
+            </div>
+          </form>
+          <p id="redirect-feedback" role="status" aria-live="polite"></p>
+        </section>
+
+        <section class="list-section">
+          <h2>Redirect rules</h2>
+          <ul id="redirect-rules-list" class="rules-list"></ul>
+        </section>
+      </section>
+
+      <section class="tab-panel" data-tab-panel="help" role="tabpanel" hidden>
+        <section class="info-section">
+          <h2>Tips</h2>
+          <ul class="info-list">
+            <li>
+              Domain regex is matched against the requested asset host (e.g. <code>cdn.example.com</code>).
+            </li>
+            <li>
+              File regex is matched against the full request path plus query (e.g. <code>/js/app.js?build=1</code>).
+            </li>
+            <li>
+              Redirect rules block navigations whose final URL matches the regex you provide.
+            </li>
+            <li>
+              Chrome uses the RE2 engine. Avoid lookbehinds and other unsupported constructs.
+            </li>
+            <li>
+              Test patterns in an external regex tester before saving to avoid silent skips.
+            </li>
+          </ul>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>
