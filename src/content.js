@@ -1,76 +1,35 @@
 (function () {
   "use strict";
 
-  let redirectRules = [];
+  let cachedRules = [];
 
-  async function loadRedirectRules() {
+  async function loadRules() {
     try {
-      const { redirectRules: stored = [] } = await chrome.storage.sync.get("redirectRules");
-      redirectRules = stored
-        .map((rule) => {
-          if (!rule.domainPattern) return null;
-          try {
-            return rule.domainPattern;
-          } catch (error) {
-            console.warn(`[pwcrowbar] Invalid regex: ${rule.domainPattern}`, error);
-            return null;
-          }
-        })
-        .filter(Boolean);
-      
-      console.log(`[pwcrowbar] Loaded ${redirectRules.length} redirect rules`);
-      injectScript();
-      setTimeout(updateInjectedRules, 100);
+      const { redirectRules = [] } = await chrome.storage.sync.get("redirectRules");
+      cachedRules = (Array.isArray(redirectRules) ? redirectRules : [])
+        .map((rule) => rule?.domainPattern)
+        .filter((pattern) => typeof pattern === "string" && pattern.length);
     } catch (error) {
-      console.error("[pwcrowbar] Failed to load redirect rules", error);
-      redirectRules = [];
-      injectScript();
-      setTimeout(updateInjectedRules, 100);
+      console.warn("[pwcrowbar] Failed to load redirect rules", error);
+      cachedRules = [];
     }
   }
 
-  function injectScript() {
-    const existing = document.querySelector('script[src*="injected.js"]');
-    if (existing) {
-      existing.remove();
-    }
-
-    const script = document.createElement("script");
-    script.src = chrome.runtime.getURL("src/injected.js");
-    script.dataset.rules = JSON.stringify(redirectRules);
-    script.onload = function () {
-      this.remove();
-    };
-    (document.head || document.documentElement).appendChild(script);
+  function pushRulesToMain() {
+    window.postMessage({ type: "PWCROWBAR_RULES", rules: cachedRules }, "*");
   }
 
-  function updateInjectedRules() {
-    window.postMessage(
-      {
-        type: "PWCROWBAR_UPDATE_RULES",
-        rules: redirectRules,
-      },
-      "*"
-    );
-  }
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+    if (event.data?.type !== "PWCROWBAR_REQUEST_RULES") return;
+    pushRulesToMain();
+  });
 
-  function init() {
-    console.log("[pwcrowbar] Content script initialized");
-    loadRedirectRules();
+  chrome.storage.onChanged.addListener(async (changes, areaName) => {
+    if (areaName !== "sync" || !changes.redirectRules) return;
+    await loadRules();
+    pushRulesToMain();
+  });
 
-    chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName === "sync" && changes.redirectRules) {
-        console.log("[pwcrowbar] Redirect rules changed, reloading...");
-        loadRedirectRules().then(() => {
-          setTimeout(updateInjectedRules, 100);
-        });
-      }
-    });
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
+  loadRules().then(pushRulesToMain);
 })();

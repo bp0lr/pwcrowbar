@@ -21,8 +21,7 @@ const tabPanels = document.querySelectorAll(".tab-panel");
 let resourceRules = [];
 let redirectRules = [];
 
-const ID_GENERATOR = () =>
-  (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()));
+const ID_GENERATOR = () => crypto.randomUUID();
 
 init();
 
