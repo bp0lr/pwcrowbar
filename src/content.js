@@ -2,6 +2,7 @@
   "use strict";
 
   let cachedRules = [];
+  let lastPushedSerialized = null;
 
   function extractPatterns(raw) {
     return (Array.isArray(raw) ? raw : [])
@@ -9,30 +10,32 @@
       .filter((pattern) => typeof pattern === "string" && pattern.length);
   }
 
-  function pushRulesToMain() {
+  function syncToMain() {
+    const serialized = JSON.stringify(cachedRules);
+    if (serialized === lastPushedSerialized) return;
+    lastPushedSerialized = serialized;
     window.postMessage({ type: "PWCROWBAR_RULES", rules: cachedRules }, "*");
   }
 
   window.addEventListener("message", (event) => {
     if (event.source !== window) return;
     if (event.data?.type !== "PWCROWBAR_REQUEST_RULES") return;
-    pushRulesToMain();
+    syncToMain();
   });
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local" || !changes.redirectRules) return;
     cachedRules = extractPatterns(changes.redirectRules.newValue);
-    pushRulesToMain();
+    syncToMain();
   });
 
   chrome.storage.local
     .get("redirectRules")
     .then(({ redirectRules }) => {
       cachedRules = extractPatterns(redirectRules);
-      pushRulesToMain();
+      syncToMain();
     })
     .catch((error) => {
       console.warn("[pwcrowbar] Failed to load redirect rules", error);
-      pushRulesToMain();
     });
 })();

@@ -182,8 +182,9 @@ async function reconcile(desired) {
 }
 
 async function saveStatus(status) {
+  if (!chrome.storage.session) return;
   try {
-    await chrome.storage.local.set({
+    await chrome.storage.session.set({
       pwcrowbarStatus: { ...status, at: Date.now() },
     });
   } catch (error) {

@@ -11,6 +11,8 @@
 
   let compiledRules = [];
   let lastRulesSerialized = null;
+  let interceptorsInstalled = false;
+  let metaObserver = null;
 
   function compile(patterns) {
     return patterns
@@ -24,14 +26,18 @@
       .filter(Boolean);
   }
 
+  const ABSOLUTE_URL = /^https?:\/\//i;
   function shouldBlock(url) {
     if (!compiledRules.length || !url) return false;
-    try {
-      const fullUrl = new URL(url, window.location.href).href;
-      return compiledRules.some((re) => re.test(fullUrl));
-    } catch {
-      return false;
+    let target = url;
+    if (typeof target !== "string" || !ABSOLUTE_URL.test(target)) {
+      try {
+        target = new URL(url, window.location.href).href;
+      } catch {
+        return false;
+      }
     }
+    return compiledRules.some((re) => re.test(target));
   }
 
   function blocked(method, url) {
@@ -153,26 +159,35 @@
       }
     };
 
-    document.querySelectorAll('meta[http-equiv]').forEach(inspect);
-
-    const observer = new MutationObserver((mutations) => {
+    let scoped = false;
+    metaObserver = new MutationObserver((mutations) => {
+      if (!scoped && document.head) {
+        scoped = true;
+        metaObserver.disconnect();
+        metaObserver.observe(document.head, { childList: true, subtree: false });
+        document.head.querySelectorAll("meta[http-equiv]").forEach(inspect);
+        return;
+      }
       for (const m of mutations) m.addedNodes.forEach(inspect);
     });
 
-    const scopeToHead = () => {
-      if (!document.head) return false;
-      observer.disconnect();
-      observer.observe(document.head, { childList: true, subtree: false });
-      return true;
+    if (document.head) {
+      scoped = true;
+      metaObserver.observe(document.head, { childList: true, subtree: false });
+      document.head.querySelectorAll("meta[http-equiv]").forEach(inspect);
+    } else {
+      metaObserver.observe(document.documentElement, { childList: true, subtree: false });
+    }
+
+    const teardown = () => {
+      metaObserver?.disconnect();
+      metaObserver = null;
     };
-
-    if (scopeToHead()) return;
-
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-    const upgrade = new MutationObserver(() => {
-      if (scopeToHead()) upgrade.disconnect();
-    });
-    upgrade.observe(document.documentElement, { childList: true, subtree: true });
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", teardown, { once: true });
+    } else {
+      teardown();
+    }
   }
 
   function handleRulesMessage(rules) {
@@ -181,6 +196,11 @@
     if (serialized === lastRulesSerialized) return;
     lastRulesSerialized = serialized;
     compiledRules = compile(next);
+
+    if (compiledRules.length > 0 && !interceptorsInstalled) {
+      interceptorsInstalled = true;
+      installInterceptors();
+    }
   }
 
   window.addEventListener("message", (event) => {
@@ -189,6 +209,5 @@
     handleRulesMessage(event.data.rules);
   });
 
-  installInterceptors();
   window.postMessage({ type: "PWCROWBAR_REQUEST_RULES" }, "*");
 })();
