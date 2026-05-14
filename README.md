@@ -69,6 +69,16 @@ npm test
 
 Uses Node's built-in test runner (`node --test`). No external deps.
 
+## Dev: showing the current git version in the popup
+
+The popup shows `vX.Y.Z · <short-sha>` so you can tell which build is loaded in Chrome. To refresh the stamp:
+
+```
+npm run stamp
+```
+
+That writes `src/build.json` with the current commit, branch, and a `dirty` flag if the working tree has uncommitted changes. Run it before reloading the extension when you want the popup to reflect the latest checkout. The file is gitignored.
+
 ## Status
 
 Personal-use experiment. Expect rough edges. Open issues if you find them — patches welcome.
