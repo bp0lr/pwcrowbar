@@ -1,0 +1,15 @@
+{
+  "name": "pwcrowbar",
+  "version": "0.3.0",
+  "description": "Pry open paywalls and tracking — block scripts and redirects with regex rules.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/**/*.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bp0lr/pwcrowbar.git"
+  },
+  "license": "MIT"
+}
