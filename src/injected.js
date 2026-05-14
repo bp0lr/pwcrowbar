@@ -10,6 +10,7 @@
   });
 
   let compiledRules = [];
+  let lastRulesSerialized = null;
 
   function compile(patterns) {
     return patterns
@@ -85,29 +86,16 @@
     }
 
     try {
-      const originalPushState = history.pushState;
-      history.pushState = function (state, title, url) {
-        if (url) {
-          const full = new URL(url, window.location.href).href;
-          if (shouldBlock(full)) {
-            blocked("history.pushState()", full);
+      for (const name of ["pushState", "replaceState"]) {
+        const original = history[name];
+        history[name] = function (state, title, url) {
+          if (url && shouldBlock(url)) {
+            blocked(`history.${name}()`, url);
             return;
           }
-        }
-        return originalPushState.call(this, state, title, url);
-      };
-
-      const originalReplaceState = history.replaceState;
-      history.replaceState = function (state, title, url) {
-        if (url) {
-          const full = new URL(url, window.location.href).href;
-          if (shouldBlock(full)) {
-            blocked("history.replaceState()", full);
-            return;
-          }
-        }
-        return originalReplaceState.call(this, state, title, url);
-      };
+          return original.call(this, state, title, url);
+        };
+      }
     } catch (error) {
       console.warn("[pwcrowbar] could not wrap history", error);
     }
@@ -154,40 +142,45 @@
   }
 
   function installMetaRefreshObserver() {
-    function inspect(node) {
+    const inspect = (node) => {
       if (!(node instanceof Element)) return;
-      if (
-        node.tagName === "META" &&
-        node.getAttribute("http-equiv")?.toLowerCase() === "refresh"
-      ) {
-        const content = node.getAttribute("content") || "";
-        const urlMatch = content.match(/url\s*=\s*['"]?([^'">]+)/i);
-        if (urlMatch && shouldBlock(urlMatch[1])) {
-          blocked("meta-refresh", urlMatch[1]);
-          node.remove();
-        }
+      if (node.tagName !== "META") return;
+      if (node.getAttribute("http-equiv")?.toLowerCase() !== "refresh") return;
+      const url = node.getAttribute("content")?.match(/url\s*=\s*['"]?([^'">]+)/i)?.[1];
+      if (url && shouldBlock(url)) {
+        blocked("meta-refresh", url);
+        node.remove();
       }
-    }
+    };
 
     document.querySelectorAll('meta[http-equiv]').forEach(inspect);
 
-    try {
-      const observer = new MutationObserver((mutations) => {
-        for (const m of mutations) {
-          m.addedNodes.forEach(inspect);
-        }
-      });
-      observer.observe(document.documentElement || document, {
-        childList: true,
-        subtree: true,
-      });
-    } catch (error) {
-      console.warn("[pwcrowbar] could not install meta-refresh observer", error);
-    }
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) m.addedNodes.forEach(inspect);
+    });
+
+    const scopeToHead = () => {
+      if (!document.head) return false;
+      observer.disconnect();
+      observer.observe(document.head, { childList: true, subtree: false });
+      return true;
+    };
+
+    if (scopeToHead()) return;
+
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    const upgrade = new MutationObserver(() => {
+      if (scopeToHead()) upgrade.disconnect();
+    });
+    upgrade.observe(document.documentElement, { childList: true, subtree: true });
   }
 
   function handleRulesMessage(rules) {
-    compiledRules = compile(Array.isArray(rules) ? rules : []);
+    const next = Array.isArray(rules) ? rules : [];
+    const serialized = JSON.stringify(next);
+    if (serialized === lastRulesSerialized) return;
+    lastRulesSerialized = serialized;
+    compiledRules = compile(next);
   }
 
   window.addEventListener("message", (event) => {

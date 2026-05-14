@@ -3,6 +3,7 @@ import {
   buildRedirectRegexFilter,
   isValidRegex,
 } from "./lib/regex-builder.js";
+import { normalizeResourceRules, normalizeRedirectRules } from "./lib/rules.js";
 
 const DEFAULT_RESOURCE_RULES = [];
 const DEFAULT_REDIRECT_RULES = [];
@@ -39,14 +40,12 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
 async function migrateSyncToLocal() {
   try {
-    const localState = await chrome.storage.local.get([
-      "rules",
-      "redirectRules",
-      MIGRATION_FLAG,
+    const [localState, syncState] = await Promise.all([
+      chrome.storage.local.get(["rules", "redirectRules", MIGRATION_FLAG]),
+      chrome.storage.sync.get(["rules", "redirectRules"]),
     ]);
     if (localState[MIGRATION_FLAG]) return;
 
-    const syncState = await chrome.storage.sync.get(["rules", "redirectRules"]);
     const hasSync =
       Array.isArray(syncState.rules) || Array.isArray(syncState.redirectRules);
 
@@ -101,11 +100,11 @@ async function rebuildDynamicRules() {
     const { rules = DEFAULT_RESOURCE_RULES, redirectRules = DEFAULT_REDIRECT_RULES } =
       await chrome.storage.local.get(["rules", "redirectRules"]);
 
-    const desired = buildDynamicRules(
+    const { dynamicRules: desired, skipped } = buildDynamicRules(
       normalizeResourceRules(rules),
-      normalizeRedirectRules(redirectRules),
-      status.skipped
+      normalizeRedirectRules(redirectRules)
     );
+    status.skipped = skipped;
 
     const overLimit = checkLimits(desired);
     if (overLimit) {
@@ -192,31 +191,9 @@ async function saveStatus(status) {
   }
 }
 
-function normalizeResourceRules(raw) {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((rule) => ({
-      id: rule.id ?? crypto.randomUUID(),
-      domainPattern: typeof rule.domainPattern === "string" ? rule.domainPattern.trim() : "",
-      filePatterns: Array.isArray(rule.filePatterns)
-        ? rule.filePatterns.map((pattern) => pattern.trim()).filter(Boolean)
-        : [],
-    }))
-    .filter((rule) => rule.domainPattern && rule.filePatterns.length);
-}
-
-function normalizeRedirectRules(raw) {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((rule) => ({
-      id: rule.id ?? crypto.randomUUID(),
-      domainPattern: typeof rule.domainPattern === "string" ? rule.domainPattern.trim() : "",
-    }))
-    .filter((rule) => rule.domainPattern);
-}
-
-function buildDynamicRules(resourceRules, redirectRules, skipped = []) {
+function buildDynamicRules(resourceRules, redirectRules) {
   const dynamicRules = [];
+  const skipped = [];
 
   resourceRules.forEach((rule) => {
     if (!isValidRegex(rule.domainPattern)) {
@@ -250,5 +227,5 @@ function buildDynamicRules(resourceRules, redirectRules, skipped = []) {
     });
   });
 
-  return dynamicRules;
+  return { dynamicRules, skipped };
 }

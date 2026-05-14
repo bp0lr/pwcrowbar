@@ -1,3 +1,6 @@
+import { isValidRegex } from "./lib/regex-builder.js";
+import { normalizeResourceRules, normalizeRedirectRules } from "./lib/rules.js";
+
 const resourceForm = document.getElementById("rule-form");
 const ruleIdInput = document.getElementById("rule-id");
 const domainInput = document.getElementById("domain-regex");
@@ -22,6 +25,7 @@ let resourceRules = [];
 let redirectRules = [];
 
 const ID_GENERATOR = () => crypto.randomUUID();
+
 
 init();
 
@@ -72,29 +76,6 @@ async function loadRules() {
 
   renderResourceRules();
   renderRedirectRules();
-}
-
-function normalizeResourceRules(raw) {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((rule) => ({
-      id: rule.id || ID_GENERATOR(),
-      domainPattern: typeof rule.domainPattern === "string" ? rule.domainPattern.trim() : "",
-      filePatterns: Array.isArray(rule.filePatterns)
-        ? rule.filePatterns.map((pattern) => pattern.trim()).filter(Boolean)
-        : [],
-    }))
-    .filter((rule) => rule.domainPattern && rule.filePatterns.length);
-}
-
-function normalizeRedirectRules(raw) {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((rule) => ({
-      id: rule.id || ID_GENERATOR(),
-      domainPattern: typeof rule.domainPattern === "string" ? rule.domainPattern.trim() : "",
-    }))
-    .filter((rule) => rule.domainPattern);
 }
 
 async function handleResourceSubmit(event) {
@@ -180,16 +161,6 @@ function parseLines(value) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-}
-
-function isValidRegex(pattern) {
-  try {
-    // eslint-disable-next-line no-new
-    new RegExp(pattern);
-    return true;
-  } catch (_error) {
-    return false;
-  }
 }
 
 function renderResourceRules() {

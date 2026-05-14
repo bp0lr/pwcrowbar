@@ -17,57 +17,43 @@ export function isValidRegex(pattern) {
   }
 }
 
+function rewriteSubdomainWildcard(d) {
+  const group = d.match(/\([^)]+\)/)?.[0];
+  return group?.includes("^|") ? d.replace(group, "(?:[^/]*\\.)?") : d;
+}
+
+function resourceDomainBody(d) {
+  if (d.startsWith("^")) return d.slice(1);
+  const rewritten = rewriteSubdomainWildcard(d);
+  return rewritten === d ? `[^/]*?(?:${d})` : rewritten;
+}
+
+function pathBody(f) {
+  if (f.startsWith("^")) return f.slice(1);
+  if (f.startsWith("/")) return f;
+  return `.*?(?:${f})`;
+}
+
 export function buildRegexFilter(domainPattern, filePattern) {
   if (!isValidRegex(filePattern)) return null;
+  const domain = stripRegexDelimiters(domainPattern).replace(/\$$/, "");
+  const file = stripRegexDelimiters(filePattern);
+  if (!domain || !file) return null;
 
-  const sanitizedDomain = stripRegexDelimiters(domainPattern).replace(/\$$/, "");
-  const sanitizedFile = stripRegexDelimiters(filePattern);
-  if (!sanitizedDomain || !sanitizedFile) return null;
-
-  let domainSegment;
-  if (sanitizedDomain.startsWith("^")) {
-    domainSegment = `^https?://${sanitizedDomain.slice(1)}`;
-  } else if (sanitizedDomain.includes("(^|")) {
-    const patternToReplace = sanitizedDomain.match(/\([^)]+\)/)?.[0];
-    if (patternToReplace && patternToReplace.includes("^|")) {
-      const processedDomain = sanitizedDomain.replace(patternToReplace, "(?:[^/]*\\.)?");
-      domainSegment = `^https?://${processedDomain}`;
-    } else {
-      domainSegment = `^https?://[^/]*?(?:${sanitizedDomain})`;
-    }
-  } else {
-    domainSegment = `^https?://[^/]*?(?:${sanitizedDomain})`;
-  }
-
-  let pathSegment;
-  if (sanitizedFile.startsWith("^")) {
-    pathSegment = sanitizedFile.slice(1);
-  } else if (sanitizedFile.startsWith("/")) {
-    pathSegment = sanitizedFile;
-  } else {
-    pathSegment = `.*?(?:${sanitizedFile})`;
-  }
-
-  const needsSlash = !pathSegment.startsWith("/");
-  const combined = `${domainSegment}${needsSlash ? "/?" : ""}${pathSegment}`;
+  const path = pathBody(file);
+  const separator = path.startsWith("/") ? "" : "/?";
+  const combined = `^https?://${resourceDomainBody(domain)}${separator}${path}`;
   return isValidRegex(combined) ? combined : null;
 }
 
 export function buildRedirectRegexFilter(domainPattern) {
-  const sanitizedDomain = stripRegexDelimiters(domainPattern);
-  if (!sanitizedDomain) return null;
+  const domain = stripRegexDelimiters(domainPattern);
+  if (!domain) return null;
 
-  let domainSegment = sanitizedDomain;
-  if (!sanitizedDomain.startsWith("^")) {
-    if (sanitizedDomain.includes("(^|")) {
-      const patternToReplace = sanitizedDomain.match(/\([^)]+\)/)?.[0];
-      if (patternToReplace && patternToReplace.includes("^|")) {
-        domainSegment = sanitizedDomain.replace(patternToReplace, "(?:[^/]*\\.)?");
-      }
-    }
-    domainSegment = domainSegment.replace(/\$$/, "");
-  }
+  const body = domain.startsWith("^")
+    ? domain.slice(1)
+    : rewriteSubdomainWildcard(domain).replace(/\$$/, "");
 
-  const fullRegex = `^https?://${domainSegment}(?:/.*)?$`;
-  return isValidRegex(fullRegex) ? fullRegex : null;
+  const full = `^https?://${body}(?:/.*)?$`;
+  return isValidRegex(full) ? full : null;
 }

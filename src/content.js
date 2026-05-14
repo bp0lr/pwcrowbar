@@ -3,16 +3,10 @@
 
   let cachedRules = [];
 
-  async function loadRules() {
-    try {
-      const { redirectRules = [] } = await chrome.storage.local.get("redirectRules");
-      cachedRules = (Array.isArray(redirectRules) ? redirectRules : [])
-        .map((rule) => rule?.domainPattern)
-        .filter((pattern) => typeof pattern === "string" && pattern.length);
-    } catch (error) {
-      console.warn("[pwcrowbar] Failed to load redirect rules", error);
-      cachedRules = [];
-    }
+  function extractPatterns(raw) {
+    return (Array.isArray(raw) ? raw : [])
+      .map((rule) => rule?.domainPattern)
+      .filter((pattern) => typeof pattern === "string" && pattern.length);
   }
 
   function pushRulesToMain() {
@@ -25,11 +19,20 @@
     pushRulesToMain();
   });
 
-  chrome.storage.onChanged.addListener(async (changes, areaName) => {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local" || !changes.redirectRules) return;
-    await loadRules();
+    cachedRules = extractPatterns(changes.redirectRules.newValue);
     pushRulesToMain();
   });
 
-  loadRules().then(pushRulesToMain);
+  chrome.storage.local
+    .get("redirectRules")
+    .then(({ redirectRules }) => {
+      cachedRules = extractPatterns(redirectRules);
+      pushRulesToMain();
+    })
+    .catch((error) => {
+      console.warn("[pwcrowbar] Failed to load redirect rules", error);
+      pushRulesToMain();
+    });
 })();
