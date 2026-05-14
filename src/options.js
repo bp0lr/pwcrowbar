@@ -1,3 +1,6 @@
+import { isValidRegex } from "./lib/regex-builder.js";
+import { normalizeResourceRules, normalizeRedirectRules } from "./lib/rules.js";
+
 const resourceForm = document.getElementById("rule-form");
 const ruleIdInput = document.getElementById("rule-id");
 const domainInput = document.getElementById("domain-regex");
@@ -21,8 +24,8 @@ const tabPanels = document.querySelectorAll(".tab-panel");
 let resourceRules = [];
 let redirectRules = [];
 
-const ID_GENERATOR = () =>
-  (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()));
+const ID_GENERATOR = () => crypto.randomUUID();
+
 
 init();
 
@@ -44,7 +47,7 @@ function init() {
   }
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "sync") return;
+    if (areaName !== "local") return;
 
     if (changes.rules) {
       const next = Array.isArray(changes.rules.newValue) ? changes.rules.newValue : [];
@@ -66,36 +69,13 @@ async function loadRules() {
   const {
     rules: storedResources = [],
     redirectRules: storedRedirects = [],
-  } = await chrome.storage.sync.get(["rules", "redirectRules"]);
+  } = await chrome.storage.local.get(["rules", "redirectRules"]);
 
   resourceRules = normalizeResourceRules(storedResources);
   redirectRules = normalizeRedirectRules(storedRedirects);
 
   renderResourceRules();
   renderRedirectRules();
-}
-
-function normalizeResourceRules(raw) {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((rule) => ({
-      id: rule.id || ID_GENERATOR(),
-      domainPattern: typeof rule.domainPattern === "string" ? rule.domainPattern.trim() : "",
-      filePatterns: Array.isArray(rule.filePatterns)
-        ? rule.filePatterns.map((pattern) => pattern.trim()).filter(Boolean)
-        : [],
-    }))
-    .filter((rule) => rule.domainPattern && rule.filePatterns.length);
-}
-
-function normalizeRedirectRules(raw) {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((rule) => ({
-      id: rule.id || ID_GENERATOR(),
-      domainPattern: typeof rule.domainPattern === "string" ? rule.domainPattern.trim() : "",
-    }))
-    .filter((rule) => rule.domainPattern);
 }
 
 async function handleResourceSubmit(event) {
@@ -130,7 +110,7 @@ async function handleResourceSubmit(event) {
     : [...resourceRules, nextRule];
 
   try {
-    await chrome.storage.sync.set({ rules: nextRules });
+    await chrome.storage.local.set({ rules: nextRules });
     resourceRules = nextRules;
     renderResourceRules();
     setFeedback(resourceFeedback, currentId ? "Rule updated." : "Rule created.");
@@ -165,7 +145,7 @@ async function handleRedirectSubmit(event) {
     : [...redirectRules, nextRule];
 
   try {
-    await chrome.storage.sync.set({ redirectRules: nextRedirectRules });
+    await chrome.storage.local.set({ redirectRules: nextRedirectRules });
     redirectRules = nextRedirectRules;
     renderRedirectRules();
     setFeedback(redirectFeedback, currentId ? "Redirect updated." : "Redirect created.");
@@ -181,16 +161,6 @@ function parseLines(value) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-}
-
-function isValidRegex(pattern) {
-  try {
-    // eslint-disable-next-line no-new
-    new RegExp(pattern);
-    return true;
-  } catch (_error) {
-    return false;
-  }
 }
 
 function renderResourceRules() {
@@ -296,7 +266,7 @@ function renderRedirectRules() {
 async function deleteResourceRule(ruleId) {
   const nextRules = resourceRules.filter((rule) => rule.id !== ruleId);
   try {
-    await chrome.storage.sync.set({ rules: nextRules });
+    await chrome.storage.local.set({ rules: nextRules });
     resourceRules = nextRules;
     renderResourceRules();
     setFeedback(resourceFeedback, "Rule deleted.");
@@ -312,7 +282,7 @@ async function deleteResourceRule(ruleId) {
 async function deleteRedirectRule(ruleId) {
   const nextRedirects = redirectRules.filter((rule) => rule.id !== ruleId);
   try {
-    await chrome.storage.sync.set({ redirectRules: nextRedirects });
+    await chrome.storage.local.set({ redirectRules: nextRedirects });
     redirectRules = nextRedirects;
     renderRedirectRules();
     setFeedback(redirectFeedback, "Redirect deleted.");

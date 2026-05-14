@@ -16,7 +16,19 @@
 
       h1 {
         font-size: 1.1rem;
-        margin: 0 0 12px;
+        margin: 0 0 4px;
+      }
+
+      .build {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.72rem;
+        color: #6b7280;
+        margin: 0 0 14px;
+      }
+
+      .build .dirty {
+        color: #b45309;
+        font-weight: 600;
       }
 
       p {
@@ -39,6 +51,7 @@
   </head>
   <body>
     <h1>pwcrowbar</h1>
+    <p class="build" id="build-info">…</p>
     <p>Open the full view to create or edit rules without closing the popup.</p>
     <button id="open-options">Open full view</button>
 

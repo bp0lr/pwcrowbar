@@ -1,342 +1,213 @@
 (function () {
   "use strict";
 
-  const PWCROWBAR_KEY = "__pwcrowbarRules__";
-  let redirectRules = [];
+  if (window.__pwcrowbarInstalled__) return;
+  Object.defineProperty(window, "__pwcrowbarInstalled__", {
+    value: true,
+    configurable: false,
+    writable: false,
+    enumerable: false,
+  });
 
-  function loadRules() {
-    try {
-      const scriptTag = document.currentScript || document.querySelector('script[data-rules]');
-      if (scriptTag && scriptTag.dataset.rules) {
-        const rulesData = JSON.parse(scriptTag.dataset.rules);
-        redirectRules = rulesData
-          .map((pattern) => {
-            try {
-              return new RegExp(pattern);
-            } catch (error) {
-              console.warn(`[pwcrowbar] Invalid regex: ${pattern}`, error);
-              return null;
-            }
-          })
-          .filter(Boolean);
-        
-        window[PWCROWBAR_KEY] = redirectRules;
-        console.log(`[pwcrowbar] Loaded ${redirectRules.length} redirect rules in MAIN context`);
-      }
-    } catch (error) {
-      console.error("[pwcrowbar] Failed to load rules in MAIN context", error);
-      redirectRules = [];
-      window[PWCROWBAR_KEY] = [];
-    }
-  }
+  let compiledRules = [];
+  let lastRulesSerialized = null;
+  let interceptorsInstalled = false;
+  let metaObserver = null;
 
-  function shouldBlockRedirect(url) {
-    if (!url) return false;
-
-    const rules = redirectRules.length ? redirectRules : (window[PWCROWBAR_KEY] || []);
-    if (!rules.length) return false;
-
-    try {
-      const urlObj = new URL(url, window.location.href);
-      const fullUrl = urlObj.href;
-
-      const matched = rules.some((regex) => regex.test(fullUrl));
-
-      return matched;
-    } catch (error) {
-      console.warn("[pwcrowbar] Invalid URL:", url, error);
-      return false;
-    }
-  }
-
-  function blockRedirect(url, method) {
-    console.info(`[pwcrowbar] ✅ BLOCKED redirect to: ${url} (via ${method})`);
-    return false;
-  }
-
-  function interceptLocationHref() {
-    try {
-      const location = window.location;
-      const proto = Object.getPrototypeOf(location);
-      
-      if (proto && proto.href !== undefined) {
-        const originalSetter = Object.getOwnPropertyDescriptor(proto, "href")?.set;
-        if (originalSetter) {
-          Object.defineProperty(proto, "href", {
-            get: Object.getOwnPropertyDescriptor(proto, "href").get,
-            set: function (value) {
-              if (shouldBlockRedirect(value)) {
-                blockRedirect(value, "location.href =");
-                return;
-              }
-              originalSetter.call(this, value);
-            },
-            configurable: true,
-            enumerable: true,
-          });
+  function compile(patterns) {
+    return patterns
+      .map((pattern) => {
+        try {
+          return new RegExp(pattern);
+        } catch {
+          return null;
         }
-      }
-    } catch (error) {
-      console.warn("[pwcrowbar] Could not intercept location.href", error);
-    }
+      })
+      .filter(Boolean);
   }
 
-  function interceptLocationMethods() {
-    try {
-      const location = window.location;
-      const proto = Object.getPrototypeOf(location);
-
-      if (proto && proto.replace) {
-        const originalReplace = proto.replace;
-        Object.defineProperty(proto, "replace", {
-          value: function (url) {
-            if (shouldBlockRedirect(url)) {
-              blockRedirect(url, "location.replace()");
-              return;
-            }
-            return originalReplace.call(this, url);
-          },
-          writable: true,
-          configurable: true,
-        });
+  const ABSOLUTE_URL = /^https?:\/\//i;
+  function shouldBlock(url) {
+    if (!compiledRules.length || !url) return false;
+    let target = url;
+    if (typeof target !== "string" || !ABSOLUTE_URL.test(target)) {
+      try {
+        target = new URL(url, window.location.href).href;
+      } catch {
+        return false;
       }
-
-      if (proto && proto.assign) {
-        const originalAssign = proto.assign;
-        Object.defineProperty(proto, "assign", {
-          value: function (url) {
-            if (shouldBlockRedirect(url)) {
-              blockRedirect(url, "location.assign()");
-              return;
-            }
-            return originalAssign.call(this, url);
-          },
-          writable: true,
-          configurable: true,
-        });
-      }
-    } catch (error) {
-      console.warn("[pwcrowbar] Could not intercept location methods", error);
     }
+    return compiledRules.some((re) => re.test(target));
   }
 
-  function interceptHistory() {
-    try {
-      const originalPushState = history.pushState;
-      history.pushState = function (state, title, url) {
-        if (url) {
-          const fullUrl = new URL(url, window.location.href).href;
-          if (shouldBlockRedirect(fullUrl)) {
-            blockRedirect(fullUrl, "history.pushState()");
+  function blocked(method, url) {
+    console.info(`[pwcrowbar] blocked ${method} → ${url}`);
+  }
+
+  function wrap(proto, propName, kind) {
+    if (!proto) return;
+    const descriptor = Object.getOwnPropertyDescriptor(proto, propName);
+    if (!descriptor) return;
+
+    if (kind === "accessor" && descriptor.set) {
+      const originalSet = descriptor.set;
+      const originalGet = descriptor.get;
+      Object.defineProperty(proto, propName, {
+        configurable: true,
+        enumerable: descriptor.enumerable,
+        get: originalGet,
+        set(value) {
+          if (shouldBlock(value)) {
+            blocked(`${proto.constructor?.name || "?"}.${propName} =`, value);
             return;
           }
-        }
-        return originalPushState.call(history, state, title, url);
-      };
-
-      const originalReplaceState = history.replaceState;
-      history.replaceState = function (state, title, url) {
-        if (url) {
-          const fullUrl = new URL(url, window.location.href).href;
-          if (shouldBlockRedirect(fullUrl)) {
-            blockRedirect(fullUrl, "history.replaceState()");
+          originalSet.call(this, value);
+        },
+      });
+    } else if (kind === "method" && typeof descriptor.value === "function") {
+      const original = descriptor.value;
+      Object.defineProperty(proto, propName, {
+        configurable: true,
+        enumerable: descriptor.enumerable,
+        writable: descriptor.writable,
+        value(...args) {
+          if (args[0] && shouldBlock(args[0])) {
+            blocked(`${propName}()`, args[0]);
             return;
           }
-        }
-        return originalReplaceState.call(history, state, title, url);
-      };
-    } catch (error) {
-      console.warn("[pwcrowbar] Could not intercept history", error);
+          return original.apply(this, args);
+        },
+      });
     }
   }
 
-  function interceptWindowOpen() {
+  function installInterceptors() {
+    try {
+      const locProto = Object.getPrototypeOf(window.location);
+      wrap(locProto, "href", "accessor");
+      wrap(locProto, "assign", "method");
+      wrap(locProto, "replace", "method");
+    } catch (error) {
+      console.warn("[pwcrowbar] could not wrap location", error);
+    }
+
+    try {
+      for (const name of ["pushState", "replaceState"]) {
+        const original = history[name];
+        history[name] = function (state, title, url) {
+          if (url && shouldBlock(url)) {
+            blocked(`history.${name}()`, url);
+            return;
+          }
+          return original.call(this, state, title, url);
+        };
+      }
+    } catch (error) {
+      console.warn("[pwcrowbar] could not wrap history", error);
+    }
+
     try {
       const originalOpen = window.open;
       window.open = function (url, target, features) {
-        if (url && shouldBlockRedirect(url)) {
-          blockRedirect(url, "window.open()");
+        if (url && shouldBlock(url)) {
+          blocked("window.open()", url);
           return null;
         }
-        return originalOpen.call(window, url, target, features);
+        return originalOpen.call(this, url, target, features);
       };
     } catch (error) {
-      console.warn("[pwcrowbar] Could not intercept window.open", error);
+      console.warn("[pwcrowbar] could not wrap window.open", error);
     }
-  }
 
-  function interceptDocumentLocation() {
-    try {
-      if (document.location) {
-        const docLoc = document.location;
-        const proto = Object.getPrototypeOf(docLoc);
-        
-        if (proto && proto.href !== undefined) {
-          const originalSetter = Object.getOwnPropertyDescriptor(proto, "href")?.set;
-          if (originalSetter) {
-            Object.defineProperty(proto, "href", {
-              get: Object.getOwnPropertyDescriptor(proto, "href").get,
-              set: function (value) {
-                if (shouldBlockRedirect(value)) {
-                  blockRedirect(value, "document.location.href =");
-                  return;
-                }
-                originalSetter.call(this, value);
-              },
-              configurable: true,
-              enumerable: true,
-            });
-          }
-        }
-      }
-    } catch (error) {
-      console.warn("[pwcrowbar] Could not intercept document.location", error);
-    }
-  }
-
-  function setupInterceptors() {
-    console.log("[pwcrowbar] Setting up interceptors in MAIN context...");
-    
-    try {
-      interceptLocationHref();
-      interceptLocationMethods();
-      interceptHistory();
-      interceptWindowOpen();
-      interceptDocumentLocation();
-      console.log("[pwcrowbar] ✅ Interceptors set up successfully");
-    } catch (error) {
-      console.error("[pwcrowbar] Failed to setup interceptors", error);
-    }
-  }
-
-
-  function interceptNavigationEvents() {
-    window.addEventListener("beforeunload", (event) => {
-      const targetUrl = window.location.href;
-      if (shouldBlockRedirect(targetUrl)) {
-        console.log(`[pwcrowbar] ⚠️ BLOCKING navigation to: ${targetUrl}`);
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        event.stopPropagation();
-        event.returnValue = "Navigation blocked by Redirect Blocker";
-        return event.returnValue;
-      }
-    }, { capture: true });
-
-    window.addEventListener("popstate", (event) => {
-      const targetUrl = window.location.href;
-      if (shouldBlockRedirect(targetUrl)) {
-        console.log(`[pwcrowbar] ⚠️ Blocking popstate navigation to: ${targetUrl}`);
-        history.back();
-      }
-    }, { capture: true });
-  }
-
-  function monitorUrlChanges() {
-    let lastUrl = window.location.href;
-    let lastHostname = window.location.hostname;
-    let lastPathname = window.location.pathname;
-    let isBlocking = false;
-    
-    function checkUrl() {
+    if (typeof window.navigation?.addEventListener === "function") {
       try {
-        if (isBlocking) return;
-        
-        const currentUrl = window.location.href;
-        const currentHostname = window.location.hostname;
-        const currentPathname = window.location.pathname;
-        
-        if (currentHostname !== lastHostname || currentPathname !== lastPathname) {
-          if (shouldBlockRedirect(currentUrl)) {
-            console.log(`[pwcrowbar] ⚠️ BLOCKING redirect to: ${currentUrl}`);
-            isBlocking = true;
-            
-            try {
-              window.stop();
-              const revertUrl = lastUrl;
-              window.history.replaceState(null, "", revertUrl);
-              
-              setTimeout(() => {
-                try {
-                  window.location.replace(revertUrl);
-                } catch (e) {
-                  console.error("[pwcrowbar] location.replace failed", e);
-                }
-                isBlocking = false;
-              }, 50);
-              
-            } catch (error) {
-              console.error("[pwcrowbar] Failed to revert URL", error);
-              isBlocking = false;
-            }
-          } else {
-            lastUrl = currentUrl;
-            lastHostname = currentHostname;
-            lastPathname = currentPathname;
+        window.navigation.addEventListener("navigate", (event) => {
+          const target = event?.destination?.url;
+          if (target && shouldBlock(target)) {
+            blocked("Navigation API", target);
+            event.preventDefault?.();
           }
-        } else if (currentUrl !== lastUrl) {
-          lastUrl = currentUrl;
-        }
-      } catch (error) {
-        console.warn("[pwcrowbar] Error monitoring URL changes", error);
-      }
-    }
-    
-    setInterval(checkUrl, 500);
-  }
-
-  function interceptTopLocation() {
-    try {
-      if (window.top && window.top !== window) {
-        const originalTopLocation = window.top.location;
-        Object.defineProperty(window.top, "location", {
-          get: function () {
-            return originalTopLocation;
-          },
-          set: function (value) {
-            if (shouldBlockRedirect(value)) {
-              blockRedirect(value, "window.top.location =");
-              return;
-            }
-            if (typeof value === "string") {
-              originalTopLocation.href = value;
-            }
-          },
-          configurable: true,
-          enumerable: true,
         });
+      } catch (error) {
+        console.warn("[pwcrowbar] could not subscribe to Navigation API", error);
       }
-    } catch (error) {
-      console.warn("[pwcrowbar] Could not intercept window.top.location (may be cross-origin)", error);
+    }
+
+    window.addEventListener(
+      "hashchange",
+      (event) => {
+        if (shouldBlock(event.newURL)) {
+          blocked("hashchange", event.newURL);
+          history.replaceState(null, "", event.oldURL);
+        }
+      },
+      { capture: true }
+    );
+
+    installMetaRefreshObserver();
+  }
+
+  function installMetaRefreshObserver() {
+    const inspect = (node) => {
+      if (!(node instanceof Element)) return;
+      if (node.tagName !== "META") return;
+      if (node.getAttribute("http-equiv")?.toLowerCase() !== "refresh") return;
+      const url = node.getAttribute("content")?.match(/url\s*=\s*['"]?([^'">]+)/i)?.[1];
+      if (url && shouldBlock(url)) {
+        blocked("meta-refresh", url);
+        node.remove();
+      }
+    };
+
+    let scoped = false;
+    metaObserver = new MutationObserver((mutations) => {
+      if (!scoped && document.head) {
+        scoped = true;
+        metaObserver.disconnect();
+        metaObserver.observe(document.head, { childList: true, subtree: false });
+        document.head.querySelectorAll("meta[http-equiv]").forEach(inspect);
+        return;
+      }
+      for (const m of mutations) m.addedNodes.forEach(inspect);
+    });
+
+    if (document.head) {
+      scoped = true;
+      metaObserver.observe(document.head, { childList: true, subtree: false });
+      document.head.querySelectorAll("meta[http-equiv]").forEach(inspect);
+    } else {
+      metaObserver.observe(document.documentElement, { childList: true, subtree: false });
+    }
+
+    const teardown = () => {
+      metaObserver?.disconnect();
+      metaObserver = null;
+    };
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", teardown, { once: true });
+    } else {
+      teardown();
     }
   }
 
-  function init() {
-    console.log("[pwcrowbar] Injected script initialized in MAIN context");
-    loadRules();
-    setupInterceptors();
-    interceptTopLocation();
-    interceptNavigationEvents();
-    monitorUrlChanges();
+  function handleRulesMessage(rules) {
+    const next = Array.isArray(rules) ? rules : [];
+    const serialized = JSON.stringify(next);
+    if (serialized === lastRulesSerialized) return;
+    lastRulesSerialized = serialized;
+    compiledRules = compile(next);
 
-    window.addEventListener("message", (event) => {
-      if (event.data && event.data.type === "PWCROWBAR_UPDATE_RULES") {
-        const rulesData = event.data.rules || [];
-        redirectRules = rulesData
-          .map((pattern) => {
-            try {
-              return new RegExp(pattern);
-            } catch (error) {
-              return null;
-            }
-          })
-          .filter(Boolean);
-        window[PWCROWBAR_KEY] = redirectRules;
-        console.log(`[pwcrowbar] Updated ${redirectRules.length} redirect rules`);
-      }
-    });
+    if (compiledRules.length > 0 && !interceptorsInstalled) {
+      interceptorsInstalled = true;
+      installInterceptors();
+    }
   }
 
-  init();
-})();
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+    if (event.data?.type !== "PWCROWBAR_RULES") return;
+    handleRulesMessage(event.data.rules);
+  });
 
+  window.postMessage({ type: "PWCROWBAR_REQUEST_RULES" }, "*");
+})();

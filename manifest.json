@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "pwcrowbar",
   "description": "Pry open paywalls and tracking — block scripts and redirects with regex rules.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "permissions": ["storage", "declarativeNetRequest", "declarativeNetRequestWithHostAccess"],
   "host_permissions": ["<all_urls>"],
   "background": {
@@ -20,12 +20,12 @@
       "js": ["src/content.js"],
       "run_at": "document_start",
       "world": "ISOLATED"
-    }
-  ],
-  "web_accessible_resources": [
+    },
     {
-      "resources": ["src/injected.js"],
-      "matches": ["<all_urls>"]
+      "matches": ["<all_urls>"],
+      "js": ["src/injected.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
     }
   ]
 }

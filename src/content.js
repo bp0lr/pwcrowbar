@@ -1,76 +1,41 @@
 (function () {
   "use strict";
 
-  let redirectRules = [];
+  let cachedRules = [];
+  let lastPushedSerialized = null;
 
-  async function loadRedirectRules() {
-    try {
-      const { redirectRules: stored = [] } = await chrome.storage.sync.get("redirectRules");
-      redirectRules = stored
-        .map((rule) => {
-          if (!rule.domainPattern) return null;
-          try {
-            return rule.domainPattern;
-          } catch (error) {
-            console.warn(`[pwcrowbar] Invalid regex: ${rule.domainPattern}`, error);
-            return null;
-          }
-        })
-        .filter(Boolean);
-      
-      console.log(`[pwcrowbar] Loaded ${redirectRules.length} redirect rules`);
-      injectScript();
-      setTimeout(updateInjectedRules, 100);
-    } catch (error) {
-      console.error("[pwcrowbar] Failed to load redirect rules", error);
-      redirectRules = [];
-      injectScript();
-      setTimeout(updateInjectedRules, 100);
-    }
+  function extractPatterns(raw) {
+    return (Array.isArray(raw) ? raw : [])
+      .map((rule) => rule?.domainPattern)
+      .filter((pattern) => typeof pattern === "string" && pattern.length);
   }
 
-  function injectScript() {
-    const existing = document.querySelector('script[src*="injected.js"]');
-    if (existing) {
-      existing.remove();
-    }
-
-    const script = document.createElement("script");
-    script.src = chrome.runtime.getURL("src/injected.js");
-    script.dataset.rules = JSON.stringify(redirectRules);
-    script.onload = function () {
-      this.remove();
-    };
-    (document.head || document.documentElement).appendChild(script);
+  function syncToMain() {
+    const serialized = JSON.stringify(cachedRules);
+    if (serialized === lastPushedSerialized) return;
+    lastPushedSerialized = serialized;
+    window.postMessage({ type: "PWCROWBAR_RULES", rules: cachedRules }, "*");
   }
 
-  function updateInjectedRules() {
-    window.postMessage(
-      {
-        type: "PWCROWBAR_UPDATE_RULES",
-        rules: redirectRules,
-      },
-      "*"
-    );
-  }
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+    if (event.data?.type !== "PWCROWBAR_REQUEST_RULES") return;
+    syncToMain();
+  });
 
-  function init() {
-    console.log("[pwcrowbar] Content script initialized");
-    loadRedirectRules();
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local" || !changes.redirectRules) return;
+    cachedRules = extractPatterns(changes.redirectRules.newValue);
+    syncToMain();
+  });
 
-    chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName === "sync" && changes.redirectRules) {
-        console.log("[pwcrowbar] Redirect rules changed, reloading...");
-        loadRedirectRules().then(() => {
-          setTimeout(updateInjectedRules, 100);
-        });
-      }
+  chrome.storage.local
+    .get("redirectRules")
+    .then(({ redirectRules }) => {
+      cachedRules = extractPatterns(redirectRules);
+      syncToMain();
+    })
+    .catch((error) => {
+      console.warn("[pwcrowbar] Failed to load redirect rules", error);
     });
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
 })();
