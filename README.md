@@ -9,7 +9,7 @@ It's a homemade tool. Built for tinkering and personal use. No telemetry, no rem
 - **Resource blocking** — match `domain regex` + `file regex` and the request never leaves the browser. Useful for killing paywall scripts, tracking pixels, analytics beacons, etc.
 - **Redirect blocking** — match a destination URL regex and any navigation to it is cancelled. Covers both HTTP 3xx redirects (via DNR) and JavaScript redirects (via an injected script that intercepts `location.*`, `history.pushState/replaceState`, `window.open`, etc.).
 
-All rules live in `chrome.storage` and are pushed to `declarativeNetRequest` as dynamic rules.
+All rules live in `chrome.storage.local` and are pushed to `declarativeNetRequest` as dynamic rules. (Pre-`0.3.0` installs stored them in `chrome.storage.sync`; the service worker migrates them on update.)
 
 ## Install (unpacked)
 
@@ -44,14 +44,30 @@ The extension combines both into a single regex applied to the full URL.
 ## Project layout
 
 ```
-manifest.json          MV3 manifest
-src/background.js      Service worker — builds DNR rules from storage
-src/content.js         Content script (ISOLATED) — loads rules, injects MAIN-world script
-src/injected.js        Runs in MAIN — intercepts JS navigation APIs
-src/options.html/.js   Rule management UI
-src/popup.html/.js     Toolbar popup
-src/options.css        Styles
+manifest.json              MV3 manifest
+src/background.js          Service worker — DNR reconciliation, storage migration
+src/lib/regex-builder.js   Pure regex compilation (testable, no chrome.* deps)
+src/content.js             ISOLATED content script — storage ↔ MAIN bridge
+src/injected.js            MAIN content script — intercepts JS navigation APIs
+src/options.html/.js       Rule management UI
+src/popup.html/.js         Toolbar popup
+src/options.css            Styles
+tests/                     node:test unit tests for the regex builder
 ```
+
+## Resource types blocked by default
+
+Resource rules apply to: `script`, `xmlhttprequest`, `sub_frame`, `ping`, `image`. Top-level navigation (`main_frame`) is reserved for redirect rules. Other types (`stylesheet`, `font`, `media`, `websocket`, etc.) are not blocked by default to keep things scoped to what paywall/tracking scripts actually use.
+
+Redirect rules apply to `main_frame` and `sub_frame`.
+
+## Running tests
+
+```
+npm test
+```
+
+Uses Node's built-in test runner (`node --test`). No external deps.
 
 ## Status
 

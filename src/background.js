@@ -7,28 +7,24 @@ import {
 const DEFAULT_RESOURCE_RULES = [];
 const DEFAULT_REDIRECT_RULES = [];
 const RESOURCE_TYPES = [
-  "main_frame",
-  "sub_frame",
-  "stylesheet",
   "script",
-  "image",
-  "font",
-  "object",
   "xmlhttprequest",
+  "sub_frame",
   "ping",
-  "csp_report",
-  "media",
-  "websocket",
-  "other",
+  "image",
 ];
 const REDIRECT_RESOURCE_TYPES = ["main_frame", "sub_frame"];
+const MIGRATION_FLAG = "_migratedFromSync_v0_3";
 
 const MAX_DYNAMIC_RULES =
   chrome.declarativeNetRequest?.MAX_NUMBER_OF_DYNAMIC_RULES ?? 5000;
 const MAX_REGEX_RULES =
   chrome.declarativeNetRequest?.MAX_NUMBER_OF_REGEX_RULES ?? 1000;
 
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.runtime.onInstalled.addListener(async ({ reason }) => {
+  if (reason === "install" || reason === "update") {
+    await migrateSyncToLocal();
+  }
   await ensureDefaultRules();
   await queueRebuild();
 });
@@ -36,10 +32,48 @@ chrome.runtime.onInstalled.addListener(async () => {
 chrome.runtime.onStartup.addListener(() => queueRebuild());
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === "sync" && (changes.rules || changes.redirectRules)) {
+  if (areaName === "local" && (changes.rules || changes.redirectRules)) {
     queueRebuild();
   }
 });
+
+async function migrateSyncToLocal() {
+  try {
+    const localState = await chrome.storage.local.get([
+      "rules",
+      "redirectRules",
+      MIGRATION_FLAG,
+    ]);
+    if (localState[MIGRATION_FLAG]) return;
+
+    const syncState = await chrome.storage.sync.get(["rules", "redirectRules"]);
+    const hasSync =
+      Array.isArray(syncState.rules) || Array.isArray(syncState.redirectRules);
+
+    const merged = {
+      [MIGRATION_FLAG]: true,
+      rules: Array.isArray(localState.rules)
+        ? localState.rules
+        : Array.isArray(syncState.rules)
+        ? syncState.rules
+        : DEFAULT_RESOURCE_RULES,
+      redirectRules: Array.isArray(localState.redirectRules)
+        ? localState.redirectRules
+        : Array.isArray(syncState.redirectRules)
+        ? syncState.redirectRules
+        : DEFAULT_REDIRECT_RULES,
+    };
+
+    await chrome.storage.local.set(merged);
+
+    if (hasSync) {
+      await chrome.storage.sync.remove(["rules", "redirectRules"]);
+      console.info("[pwcrowbar] Migrated rules from chrome.storage.sync → local");
+    }
+  } catch (error) {
+    console.warn("[pwcrowbar] Storage migration failed", error);
+  }
+}
 
 let pendingBuild = Promise.resolve();
 function queueRebuild() {
@@ -50,7 +84,7 @@ function queueRebuild() {
 }
 
 async function ensureDefaultRules() {
-  const { rules, redirectRules } = await chrome.storage.sync.get([
+  const { rules, redirectRules } = await chrome.storage.local.get([
     "rules",
     "redirectRules",
   ]);
@@ -58,14 +92,14 @@ async function ensureDefaultRules() {
   const updates = {};
   if (!Array.isArray(rules)) updates.rules = DEFAULT_RESOURCE_RULES;
   if (!Array.isArray(redirectRules)) updates.redirectRules = DEFAULT_REDIRECT_RULES;
-  if (Object.keys(updates).length) await chrome.storage.sync.set(updates);
+  if (Object.keys(updates).length) await chrome.storage.local.set(updates);
 }
 
 async function rebuildDynamicRules() {
   const status = { ok: true, added: 0, removed: 0, unchanged: 0, skipped: [], error: null };
   try {
     const { rules = DEFAULT_RESOURCE_RULES, redirectRules = DEFAULT_REDIRECT_RULES } =
-      await chrome.storage.sync.get(["rules", "redirectRules"]);
+      await chrome.storage.local.get(["rules", "redirectRules"]);
 
     const desired = buildDynamicRules(
       normalizeResourceRules(rules),

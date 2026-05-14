@@ -5,7 +5,7 @@
 
   async function loadRules() {
     try {
-      const { redirectRules = [] } = await chrome.storage.sync.get("redirectRules");
+      const { redirectRules = [] } = await chrome.storage.local.get("redirectRules");
       cachedRules = (Array.isArray(redirectRules) ? redirectRules : [])
         .map((rule) => rule?.domainPattern)
         .filter((pattern) => typeof pattern === "string" && pattern.length);
@@ -26,7 +26,7 @@
   });
 
   chrome.storage.onChanged.addListener(async (changes, areaName) => {
-    if (areaName !== "sync" || !changes.redirectRules) return;
+    if (areaName !== "local" || !changes.redirectRules) return;
     await loadRules();
     pushRulesToMain();
   });

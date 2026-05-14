@@ -43,7 +43,7 @@ function init() {
   }
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "sync") return;
+    if (areaName !== "local") return;
 
     if (changes.rules) {
       const next = Array.isArray(changes.rules.newValue) ? changes.rules.newValue : [];
@@ -65,7 +65,7 @@ async function loadRules() {
   const {
     rules: storedResources = [],
     redirectRules: storedRedirects = [],
-  } = await chrome.storage.sync.get(["rules", "redirectRules"]);
+  } = await chrome.storage.local.get(["rules", "redirectRules"]);
 
   resourceRules = normalizeResourceRules(storedResources);
   redirectRules = normalizeRedirectRules(storedRedirects);
@@ -129,7 +129,7 @@ async function handleResourceSubmit(event) {
     : [...resourceRules, nextRule];
 
   try {
-    await chrome.storage.sync.set({ rules: nextRules });
+    await chrome.storage.local.set({ rules: nextRules });
     resourceRules = nextRules;
     renderResourceRules();
     setFeedback(resourceFeedback, currentId ? "Rule updated." : "Rule created.");
@@ -164,7 +164,7 @@ async function handleRedirectSubmit(event) {
     : [...redirectRules, nextRule];
 
   try {
-    await chrome.storage.sync.set({ redirectRules: nextRedirectRules });
+    await chrome.storage.local.set({ redirectRules: nextRedirectRules });
     redirectRules = nextRedirectRules;
     renderRedirectRules();
     setFeedback(redirectFeedback, currentId ? "Redirect updated." : "Redirect created.");
@@ -295,7 +295,7 @@ function renderRedirectRules() {
 async function deleteResourceRule(ruleId) {
   const nextRules = resourceRules.filter((rule) => rule.id !== ruleId);
   try {
-    await chrome.storage.sync.set({ rules: nextRules });
+    await chrome.storage.local.set({ rules: nextRules });
     resourceRules = nextRules;
     renderResourceRules();
     setFeedback(resourceFeedback, "Rule deleted.");
@@ -311,7 +311,7 @@ async function deleteResourceRule(ruleId) {
 async function deleteRedirectRule(ruleId) {
   const nextRedirects = redirectRules.filter((rule) => rule.id !== ruleId);
   try {
-    await chrome.storage.sync.set({ redirectRules: nextRedirects });
+    await chrome.storage.local.set({ redirectRules: nextRedirects });
     redirectRules = nextRedirects;
     renderRedirectRules();
     setFeedback(redirectFeedback, "Redirect deleted.");
